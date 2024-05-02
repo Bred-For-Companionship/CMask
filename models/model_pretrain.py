@@ -17,7 +17,7 @@ import numpy as np
 import random
 
 
-class ALBEF(nn.Module):
+class CMASK(nn.Module):
     def __init__(self,                 
                  text_encoder = None,
                  tokenizer = None,

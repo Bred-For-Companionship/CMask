@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 import numpy as np
 
-class ALBEF(nn.Module):
+class CMASK(nn.Module):
     def __init__(self,                 
                  text_encoder = None,
                  text_decoder = None,

@@ -6,7 +6,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-class ALBEF(nn.Module):
+class CMASK(nn.Module):
     def __init__(self,                 
                  text_encoder = None,
                  tokenizer = None,
