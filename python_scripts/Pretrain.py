@@ -62,8 +62,11 @@ def train(model, data_loader, optimizer, tokenizer, epoch, warmup_steps, device,
             alpha = config['alpha']
         else:
             alpha = config['alpha']*min(1,i/len(data_loader)) 
-        
-        loss_mlm, loss_ita, loss_itm = model(image, text_input, alpha = alpha)  
+
+        #select masks for batch t + 1 while model trains on batch t
+
+        #pass masked indices for batch t+1 on each forward pass
+        loss_mlm, loss_ita, loss_itm = model(image, text_input, alpha = alpha, mask_indices=mask_indices)
             
         loss = loss_mlm + loss_ita + loss_itm    
           

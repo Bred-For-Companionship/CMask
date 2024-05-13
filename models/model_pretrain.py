@@ -28,7 +28,7 @@ class CMASK(nn.Module):
         super().__init__()
         
         self.tokenizer = tokenizer 
-        self.mlm_probability = config['mlm_probability']
+        self.mlm_probability = 0  #change to 0 as we learn masks; retain original infrastructure    #config['mlm_probability']
         embed_dim = config['embed_dim']
      
         self.visual_encoder = VisionTransformer(
@@ -85,7 +85,8 @@ class CMASK(nn.Module):
 
 
 
-    def forward(self, image, text, alpha=0):
+    def forward(self, image, text, alpha=0, mask_indices=None):
+        ##take selected mask indices from RL agent
         with torch.no_grad():
             self.temp.clamp_(0.001,0.5)
         
@@ -188,9 +189,10 @@ class CMASK(nn.Module):
         input_ids = text.input_ids.clone()
         labels = input_ids.clone()
 
-        probability_matrix = torch.full(labels.shape, self.mlm_probability)                    
+        probability_matrix = torch.full(labels.shape, self.mlm_probability)   ##not used, all 0s
+        #retain original mask func, but pass selected masks in
         input_ids, labels = self.mask(input_ids, self.text_encoder.config.vocab_size, image.device, targets=labels,
-                                      probability_matrix = probability_matrix) 
+                                      probability_matrix = probability_matrix, masked_indices=mask_indices)
         
         with torch.no_grad():
             logits_m = self.text_encoder_m(input_ids, 
@@ -261,14 +263,14 @@ class CMASK(nn.Module):
             targets[~masked_indices] = -100 # We only compute loss on masked tokens            
 
         # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
-        indices_replaced = torch.bernoulli(torch.full(input_ids.shape, 0.8)).bool() & masked_indices
+        #change this to mask all selected masks
+        #indices_replaced = torch.bernoulli(torch.full(input_ids.shape, 0.8)).bool() & masked_indices
+        indices_replaced = masked_indices
         input_ids[indices_replaced] = self.tokenizer.mask_token_id
 
         # 10% of the time, we replace masked input tokens with random word
-        indices_random = torch.bernoulli(torch.full(input_ids.shape, 0.5)).bool() & masked_indices & ~indices_replaced
-        random_words = torch.randint(vocab_size, input_ids.shape, dtype=torch.long).to(device)
-        input_ids[indices_random] = random_words[indices_random]                     
-        # The rest of the time (10% of the time) we keep the masked input tokens unchanged   
+        # The rest of the time (10% of the time) we keep the masked input tokens unchanged
+        #delete these
         
         if targets is not None:
             return input_ids, targets
