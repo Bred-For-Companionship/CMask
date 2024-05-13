@@ -201,7 +201,9 @@ class CMASK(nn.Module):
                                            encoder_attention_mask = image_atts,      
                                            return_dict = True,
                                            return_logits = True,   
-                                          )    
+                                          )
+
+        #set output attns flag to true.
         mlm_output = self.text_encoder(input_ids, 
                                        attention_mask = text.attention_mask,
                                        encoder_hidden_states = image_embeds,
@@ -209,11 +211,15 @@ class CMASK(nn.Module):
                                        return_dict = True,
                                        labels = labels,   
                                        soft_labels = F.softmax(logits_m,dim=-1),
-                                       alpha = alpha
+                                       alpha = alpha,
+                                       output_attentions=True
                                       )                           
-        loss_mlm = mlm_output.loss        
+        loss_mlm = mlm_output.loss
 
-        return loss_mlm, loss_ita, loss_itm  
+        #get cross attention to pass to rl agent for reward
+        cross_attns = mlm_output.cross_attentions
+
+        return loss_mlm, loss_ita, loss_itm, cross_attns
 
         
 

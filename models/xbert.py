@@ -56,6 +56,9 @@ from transformers.modeling_utils import (
 from transformers.utils import logging
 from transformers.models.bert.configuration_bert import BertConfig
 
+#use custom output class to include cross attn in outputs
+from models.mlm_output_w_cross_attn import MaskedLMOutputCrossAttn
+
 import transformers
 transformers.logging.set_verbosity_error()
 
@@ -606,6 +609,8 @@ class BertEncoder(nn.Module):
                 next_decoder_cache += (layer_outputs[-1],)
             if output_attentions:
                 all_self_attentions = all_self_attentions + (layer_outputs[1],)
+                # output cross attns as well for reward calc
+                all_cross_attentions = all_cross_attentions + (layer_outputs[2],)
 
         if output_hidden_states:
             all_hidden_states = all_hidden_states + (hidden_states,)
@@ -1434,11 +1439,13 @@ class BertForMaskedLM(BertPreTrainedModel):
             output = (prediction_scores,) + outputs[2:]
             return ((masked_lm_loss,) + output) if masked_lm_loss is not None else output
 
-        return MaskedLMOutput(
+        #modified to return cross attentions as well; use custom output class to include cross attn
+        return MaskedLMOutputCrossAttn(
             loss=masked_lm_loss,
             logits=prediction_scores,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
+            cross_attentions = outputs.cross_attentions
         )
 
     def prepare_inputs_for_generation(self, input_ids, attention_mask=None, **model_kwargs):
