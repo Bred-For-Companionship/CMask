@@ -1439,13 +1439,22 @@ class BertForMaskedLM(BertPreTrainedModel):
             output = (prediction_scores,) + outputs[2:]
             return ((masked_lm_loss,) + output) if masked_lm_loss is not None else output
 
+        #get value matrices for cross attn layers
+        value_matrices = ()
+
+        for layer in self.bert.encoder.layer:
+            value_mat = layer.crossattention.self.value
+            value_matrices += (value_mat,)
+
         #modified to return cross attentions as well; use custom output class to include cross attn
+        #return value matrices for value weighted attn calc
         return MaskedLMOutputCrossAttn(
             loss=masked_lm_loss,
             logits=prediction_scores,
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
-            cross_attentions = outputs.cross_attentions
+            cross_attentions = outputs.cross_attentions,
+            value_matrices = value_matrices
         )
 
     def prepare_inputs_for_generation(self, input_ids, attention_mask=None, **model_kwargs):

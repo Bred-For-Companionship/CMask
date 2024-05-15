@@ -216,10 +216,11 @@ class CMASK(nn.Module):
                                       )                           
         loss_mlm = mlm_output.loss
 
-        #get cross attention to pass to rl agent for reward
+        #get cross attention and value matrices to pass to rl agent for reward
         cross_attns = mlm_output.cross_attentions
+        value_matrices = mlm_output.value_matrices
 
-        return loss_mlm, loss_ita, loss_itm, cross_attns
+        return loss_mlm, loss_ita, loss_itm, cross_attns, value_matrices, image_embeds
 
         
 
