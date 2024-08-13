@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 
-from models.model_pretrain_nlvr import ALBEF
+from models.model_pretrain_nlvr import CMASK
 from models.vit import interpolate_pos_embed
 from models.tokenization_bert import BertTokenizer
 
@@ -98,7 +98,7 @@ def main(args, config):
 
     #### Model #### 
     print("Creating model")
-    model = ALBEF(config=config, text_encoder=args.text_encoder, tokenizer=tokenizer)
+    model = CMASK(config=config, text_encoder=args.text_encoder, tokenizer=tokenizer)
     
     model = model.to(device)   
         

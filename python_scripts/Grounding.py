@@ -15,7 +15,7 @@ import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 from torch.utils.data import DataLoader
 
-from models.model_retrieval import ALBEF
+from models.model_retrieval import CMASK
 from models.vit import interpolate_pos_embed
 from models.tokenization_bert import BertTokenizer
 
@@ -180,7 +180,7 @@ def main(args, config):
 
     #### Model #### 
     print("Creating model")
-    model = ALBEF(config = config, text_encoder=args.text_encoder, tokenizer=tokenizer)
+    model = CMASK(config = config, text_encoder=args.text_encoder, tokenizer=tokenizer)
     
     if args.checkpoint:    
         checkpoint = torch.load(args.checkpoint, map_location='cpu') 

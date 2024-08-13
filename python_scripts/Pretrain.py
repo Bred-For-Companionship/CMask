@@ -22,20 +22,86 @@ from torch.utils.data import DataLoader
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
 
-from models.model_pretrain import ALBEF
+from models.model_pretrain import CMASK
 from models.vit import interpolate_pos_embed
 from models.tokenization_bert import BertTokenizer
+from models.rl.agent import CMaskAgent
+
 
 import utils
 from dataset import create_dataset, create_sampler, create_loader
 from scheduler import create_scheduler
 from optim import create_optimizer
+from models.rl.compute_reward import compute_reward
+import multiprocessing
+
+from optim.env import CmaskEnv
 
 
-def train(model, data_loader, optimizer, tokenizer, epoch, warmup_steps, device, scheduler, config):
+def worker_agent(input_queue, output_queue, reward_queue, agent):
+    agent.eval()
+
+    env = CmaskEnv(agent)
+    ppo_agent = PPO('MlpPolicy', env, verbose=1)
+
+    while True:
+        data = input_queue.get()
+        if data is None:
+            break
+        with torch.no_grad():
+            output = model(data)
+            output_queue.put(output)
+
+        if not reward_queue.empty():
+            reward = reward_queue.get()
+            agent.rewards.append(reward)
+        with torch.no_grad():
+            agent.observations.append(data)
+            agent.actions.append(output)
+
+        if len(agent.rewards) >= 10:
+            if len(agent.rewards) == len(agent.observations):
+                ppo_agent.learn(total_timesteps=len(agent.rewards))
+                agent.observations.clear()
+                agent.actions.clear()
+                agent.rewards.clear()
+            else:
+                extra_obs_acts = len(agent.rewards) - len(agent.observations)
+                extra_obs = agent.observations[-extra_obs_acts:]
+                extra_acts = agent.actions[-extra_obs_acts:]
+                ppo_agent.learn(total_timesteps=len(agent.rewards))
+                agent.observations.clear()
+                agent.actions.clear()
+                agent.rewards.clear()
+
+                agent.observations += extra_obs
+                agent.actions += extra_acts
+
+def worker_model(output_queue, processed_queue, model):
+    while True:
+        data_and_mask = output_queue.get()
+        if data_and_mask is None:
+            break
+        with torch.no_grad():
+            result = model(**data_and_mask)
+            processed_queue.put(result)
+
+def train(model, data_loader, optimizer, tokenizer, epoch, warmup_steps, device, scheduler, config, agent):
     # train
-    model.train()  
-    
+    model.train()
+
+    input_queue = multiprocessing.Queue()
+    output_queue = multiprocessing.Queue()
+    processed_queue = multiprocessing.Queue()
+    reward_queue = multiprocessing.Queue()
+
+    # Create and start processes
+    p1 = multiprocessing.Process(target=worker_model1, args=(input_queue, output_queue))
+    p2 = multiprocessing.Process(target=worker_model2, args=(output_queue, processed_queue))
+
+    p1.start()
+    p2.start()
+
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=50, fmt='{value:.6f}'))
     metric_logger.add_meter('loss_mlm', utils.SmoothedValue(window_size=50, fmt='{value:.4f}'))
@@ -63,30 +129,42 @@ def train(model, data_loader, optimizer, tokenizer, epoch, warmup_steps, device,
         else:
             alpha = config['alpha']*min(1,i/len(data_loader)) 
 
-        #select masks for batch t + 1 while model trains on batch t
+        #select masks for batch t + 1 while model trains on batch t, #pass masked indices for batch t+1 on each forward pass
+        input_queue.put((image, text))
 
-        #pass masked indices for batch t+1 on each forward pass
-        loss_mlm, loss_ita, loss_itm = model(image, text_input, alpha = alpha, mask_indices=mask_indices)
-            
-        loss = loss_mlm + loss_ita + loss_itm    
-          
-        loss.backward()
-        optimizer.step()    
+
+        #output cross attns to calculate reward
+        if i > 0:
+            loss_mlm, loss_ita, loss_itm, cross_attns, value_matrices, image_embeds = processed_queue.get()
+            loss = loss_mlm + loss_ita + loss_itm
+            loss.backward()
+            optimizer.step()
+
+                #calc reward
+            reward = compute_reward(cross_attns, value_matrices, image_embeds)
+            reward_queue.put(reward)
+            agent.share_params_first_n_layers(model) #share reward at each step
+
         
-        metric_logger.update(loss_mlm=loss_mlm.item())
-        metric_logger.update(loss_ita=loss_ita.item())
-        metric_logger.update(loss_itm=loss_itm.item())
-        metric_logger.update(lr=optimizer.param_groups[0]["lr"])         
-        
-        if epoch==0 and i%step_size==0 and i<=warmup_iterations: 
-            scheduler.step(i//step_size)         
+            metric_logger.update(loss_mlm=loss_mlm.item())
+            metric_logger.update(loss_ita=loss_ita.item())
+            metric_logger.update(loss_itm=loss_itm.item())
+            metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+
+            if epoch==0 and i%step_size==0 and i<=warmup_iterations:
+                scheduler.step(i//step_size)
         
     # gather the stats from all processes
-    metric_logger.synchronize_between_processes()
-    print("Averaged stats:", metric_logger.global_avg())     
-    return {k: "{:.3f}".format(meter.global_avg) for k, meter in metric_logger.meters.items()}    
-    
-    
+        metric_logger.synchronize_between_processes()
+        print("Averaged stats:", metric_logger.global_avg())
+        return {k: "{:.3f}".format(meter.global_avg) for k, meter in metric_logger.meters.items()}
+
+    input_queue.put(None)
+    output_queue.put(None)
+
+    p1.join()
+    p2.join()
+
 def main(args, config):
     utils.init_distributed_mode(args)    
     
@@ -120,9 +198,14 @@ def main(args, config):
 
     #### Model #### 
     print("Creating model")
-    model = ALBEF(config=config, text_encoder=args.text_encoder, tokenizer=tokenizer, init_deit=True)
+    model = CMASK(config=config, text_encoder=args.text_encoder, tokenizer=tokenizer, init_deit=True)
+
+    #init agent (will copy parmams for first 6 layers)
+    agent = CMaskAgent(config=config, text_encoder=args.text_encoder, tokenizer=tokenizer)
+    agent.share_params_first_n_layers(model)
     
-    model = model.to(device)   
+    model = model.to(device)
+    agent = agent.to(args.agent_device)
         
     arg_opt = utils.AttrDict(config['optimizer'])
     optimizer = create_optimizer(arg_opt, model)
@@ -158,7 +241,8 @@ def main(args, config):
         if epoch>0:
             lr_scheduler.step(epoch+warmup_steps)  
             
-        train_stats = train(model, data_loader, optimizer, tokenizer, epoch, warmup_steps, device, lr_scheduler, config) 
+        train_stats = train(model, data_loader, optimizer, tokenizer, epoch, warmup_steps, device, lr_scheduler, config,
+                            agent=agent)
         if utils.is_main_process():  
             log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                          'epoch': epoch,
@@ -191,6 +275,7 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', default='Pretrain/')
     parser.add_argument('--text_encoder', default='bert-base-uncased')
     parser.add_argument('--device', default='cuda')
+    parser.add_argument('--agent_device', default='cuda')
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--world_size', default=1, type=int, help='number of distributed processes')    
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
