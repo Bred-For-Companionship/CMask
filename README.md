@@ -10,6 +10,7 @@
 - [x] Support parallel training of agent and main model
 - [ ] Upload interpretability experiments
 - [ ] Support bridging to encoder-decoder VLMs
+- [ ] Document inference code usage
 
 ## 📚 Citation
 ```
@@ -21,8 +22,33 @@
   year={2024}
 }
 ```
+### Usage
 
+**Download data (if not downloaded)**
+To use auto download, first create an environment for LLAVIS
+```
+conda create -n lavis python=3.8
+conda activate lavis
+git clone https://github.com/salesforce/LAVIS.git
+cd LAVIS
+pip install -e .
 
+```
+Then change the download directory to the data folder for CMASK:
+```
+sed -i 's|cache_root: "/export/home/.cache/lavis"|cache_root: "../CMASK/data"|' lavis/configs/default.yaml
+```
+Afterwards, download the necessary pretrain data (or use custom ones) via (for example, for coco):
+```
+python download_coco.py
+```
+Now the conda environment for LLavis can be deleted and a new one for CMASK may be created to install requirements.txt
 
+**Pretrain**
+Change nproc_per_node to indicate number of GPU's and output directory as needed:
+
+```
+python -m torch.distributed.launch --nproc_per_node=8 --use_env Pretrain.py --config ./configs/Pretrain.yaml --output_dir output/Pretrain
+```
 
 
